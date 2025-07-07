@@ -6,4 +6,3 @@
 # Example additional paths (uncomment and modify as needed):
 # /content/drive/MyDrive/Extract_channels_audio
 /mnt/c/Users/prema/Downloads
-/mnt/c/Users/prema/Downloads
