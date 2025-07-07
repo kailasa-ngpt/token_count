@@ -1,0 +1,10 @@
+# Directory paths to process (one per line)
+# Lines starting with # are comments and will be ignored
+
+# Current directory (has the test JSONL file)
+.
+
+# Example additional paths (uncomment and modify as needed):
+# /path/to/your/data/folder1
+# /path/to/your/data/folder2
+# ./relative/path/to/data 
