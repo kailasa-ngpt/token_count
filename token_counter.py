@@ -15,6 +15,7 @@ import click
 from pathlib import Path
 from typing import List, Dict, Tuple, Set, Optional
 from collections import defaultdict
+from tqdm import tqdm
 
 try:
     from transformers import AutoTokenizer
@@ -26,15 +27,17 @@ except ImportError:
 class TokenCounter:
     """Token counter class using OpenAI's tiktoken library or HuggingFace transformers."""
     
-    def __init__(self, model_name: str = "gpt-4", tokenizer_type: str = "tiktoken", hf_model: Optional[str] = None):
+    def __init__(self, model_name: str = "gpt-4", tokenizer_type: str = "tiktoken", hf_model: Optional[str] = None, verbose: bool = False):
         """Initialize with either tiktoken or HuggingFace tokenizer.
         
         Args:
             model_name: Model name for tiktoken (e.g., 'gpt-4', 'gpt-3.5-turbo')
             tokenizer_type: Either 'tiktoken' or 'huggingface'
             hf_model: HuggingFace model name (e.g., 'bert-base-uncased', 'gpt2')
+            verbose: Enable verbose logging for detailed progress
         """
         self.tokenizer_type = tokenizer_type
+        self.verbose = verbose
         
         if tokenizer_type == "tiktoken":
             try:
@@ -50,6 +53,12 @@ class TokenCounter:
             
             if not hf_model:
                 raise ValueError("hf_model must be specified when using 'huggingface' tokenizer_type")
+            
+            # Suppress HuggingFace warnings that are not relevant for token counting
+            import warnings
+            warnings.filterwarnings("ignore", message=".*sequence length is longer than.*")
+            warnings.filterwarnings("ignore", message=".*Token indices sequence length.*")
+            warnings.filterwarnings("ignore", message=".*maximum sequence length.*")
             
             # Use AutoTokenizer with use_fast=True as requested
             self.tokenizer = AutoTokenizer.from_pretrained(hf_model, use_fast=True)
@@ -207,7 +216,7 @@ def get_supported_extensions(file_types: str) -> Set[str]:
     return extensions
 
 
-def process_directory(directory: str, counter: TokenCounter, supported_extensions: Set[str]) -> Dict:
+def process_directory(directory: str, counter: TokenCounter, supported_extensions: Set[str], use_progress_bar: bool = True) -> Dict:
     """Process all supported files in a directory."""
     dir_path = Path(directory)
     if not dir_path.exists():
@@ -232,22 +241,61 @@ def process_directory(directory: str, counter: TokenCounter, supported_extension
     
     total_tokens = 0
     files_processed = []
-    file_count = 0
     
-    # Walk through directory recursively
+    # First collect all files to process
+    files_to_process = []
     for file_path in dir_path.rglob('*'):
         if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
-            file_count += 1
-            tokens, status = counter.process_file(file_path)
-            total_tokens += tokens
-            
-            files_processed.append({
-                'file': str(file_path.relative_to(dir_path)),
-                'full_path': str(file_path),
-                'tokens': tokens,
-                'status': status,
-                'size_bytes': file_path.stat().st_size
-            })
+            files_to_process.append(file_path)
+    
+    file_count = len(files_to_process)
+    
+    if file_count == 0:
+        return {
+            'directory': directory,
+            'status': 'success',
+            'error': '',
+            'total_tokens': 0,
+            'file_count': 0,
+            'files_processed': []
+        }
+    
+    # Process files with progress bar
+    if use_progress_bar:
+        progress_bar = tqdm(
+            files_to_process, 
+            desc=f"📂 {Path(directory).name}", 
+            unit="file",
+            leave=False,
+            ncols=80
+        )
+    else:
+        progress_bar = files_to_process
+    
+    for file_path in progress_bar:
+        tokens, status = counter.process_file(file_path)
+        total_tokens += tokens
+        
+        # Update progress bar description with current file and token info
+        if use_progress_bar and isinstance(progress_bar, tqdm):
+            file_name = file_path.name
+            if len(file_name) > 20:
+                file_name = file_name[:17] + "..."
+            progress_bar.set_postfix(
+                file=file_name,
+                tokens=f"{tokens:,}" if status == "success" else "error"
+            )
+        
+        files_processed.append({
+            'file': str(file_path.relative_to(dir_path)),
+            'full_path': str(file_path),
+            'tokens': tokens,
+            'status': status,
+            'size_bytes': file_path.stat().st_size
+        })
+    
+    if use_progress_bar and isinstance(progress_bar, tqdm):
+        progress_bar.close()
     
     return {
         'directory': directory,
@@ -275,7 +323,9 @@ def process_directory(directory: str, counter: TokenCounter, supported_extension
               help='HuggingFace model name when using --tokenizer huggingface (e.g., bert-base-uncased, gpt2)')
 @click.option('--detailed', '-d', is_flag=True,
               help='Include detailed file-by-file breakdown in output')
-def main(paths_file: str, file_types: str, output: str, tokenizer: str, model: str, hf_model: str, detailed: bool):
+@click.option('--verbose', '-v', is_flag=True,
+              help='Enable verbose logging (show file-level and directory-level progress)')
+def main(paths_file: str, file_types: str, output: str, tokenizer: str, model: str, hf_model: str, detailed: bool, verbose: bool):
     """
     Count tokens in files across multiple directories using OpenAI Tiktoken or HuggingFace Transformers.
     
@@ -298,10 +348,10 @@ def main(paths_file: str, file_types: str, output: str, tokenizer: str, model: s
     # Initialize token counter
     try:
         if tokenizer.lower() == "huggingface":
-            counter = TokenCounter(model_name=model, tokenizer_type="huggingface", hf_model=hf_model)
+            counter = TokenCounter(model_name=model, tokenizer_type="huggingface", hf_model=hf_model, verbose=verbose)
             click.echo(f"✅ Initialized HuggingFace tokenizer for model: {hf_model} (use_fast=True)")
         else:
-            counter = TokenCounter(model_name=model, tokenizer_type="tiktoken")
+            counter = TokenCounter(model_name=model, tokenizer_type="tiktoken", verbose=verbose)
             click.echo(f"✅ Initialized tiktoken for model: {model}")
     except Exception as e:
         click.echo(f"❌ Error initializing tokenizer: {str(e)}")
@@ -326,10 +376,26 @@ def main(paths_file: str, file_types: str, output: str, tokenizer: str, model: s
     results = []
     detailed_results = []
     
-    with click.progressbar(directories, label='Processing directories') as dirs:
-        for directory in dirs:
-            result = process_directory(directory, counter, supported_extensions)
+    # Process directories with progress bars
+    # Use tqdm for directory-level progress bar
+    with tqdm(directories, desc="🗂️  Directories", unit="dir", ncols=100) as dir_progress:
+        for directory in dir_progress:
+            dir_name = Path(directory).name
+            if len(dir_name) > 30:
+                dir_name = dir_name[:27] + "..."
+            dir_progress.set_description(f"🗂️  Processing: {dir_name}")
+            
+            result = process_directory(directory, counter, supported_extensions, use_progress_bar=True)
             results.append(result)
+            
+            # Update directory progress with results
+            if result['status'] == 'success':
+                dir_progress.set_postfix(
+                    files=result['file_count'],
+                    tokens=f"{result['total_tokens']:,}"
+                )
+            else:
+                dir_progress.set_postfix(error=result['error'][:30])
             
             if detailed and result['files_processed']:
                 for file_info in result['files_processed']:

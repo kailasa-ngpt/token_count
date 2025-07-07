@@ -42,11 +42,11 @@ uv sync
 
 2. **Run the script**:
    ```bash
-   # Process all supported file types in directories listed in directory_paths.txt
+   # Process all supported file types with default tiktoken tokenizer
    uv run python token_counter.py
    
-   # Or use the installed command
-   uv run token-count
+   # Process with HuggingFace tokenizer (requires --hf-model)
+   uv run python token_counter.py --tokenizer huggingface --hf-model bert-base-uncased
    ```
 
 ### Advanced Usage
@@ -81,8 +81,10 @@ uv run python token_counter.py --tokenizer huggingface --hf-model roberta-base -
 - `--output, -o`: Output CSV file name (default: `token_counts.csv`)
 - `--tokenizer, --tokenizer-type`: Tokenizer type to use: `tiktoken` or `huggingface` (default: `tiktoken`)
 - `--model, -m`: Model name for tiktoken (e.g., gpt-4, gpt-3.5-turbo) (default: `gpt-4`)
-- `--hf-model`: HuggingFace model name when using `--tokenizer huggingface` (e.g., bert-base-uncased, gpt2)
+- `--hf-model`: **Required** when using `--tokenizer huggingface`. HuggingFace model name (e.g., bert-base-uncased, gpt2)
 - `--detailed, -d`: Include detailed file-by-file breakdown in output
+
+**Note**: When using `--tokenizer huggingface`, the `--hf-model` parameter is mandatory.
 
 ### Supported Tokenizers
 
@@ -185,6 +187,13 @@ uv run python token_counter.py --tokenizer huggingface --hf-model bert-base-unca
 uv run python token_counter.py --tokenizer huggingface --hf-model gpt2 --output hf_gpt2_results.csv
 ```
 
+**Example Token Count Differences** (from the same 189MB JSONL file):
+- **Tiktoken (GPT-4)**: ~76M tokens
+- **HuggingFace (GPT-2)**: ~118M tokens  
+- **HuggingFace (BERT)**: ~45M tokens
+
+*Results vary significantly due to different tokenization strategies - choose the tokenizer that matches your target model.*
+
 ## Error Handling
 
 The script handles various error conditions gracefully:
@@ -194,14 +203,27 @@ The script handles various error conditions gracefully:
 - **Corrupted files**: Reports error for individual files but continues
 - **Permission issues**: Reports access errors
 - **Empty files**: Counts as 0 tokens
+- **Missing HuggingFace model**: Clear error message when `--hf-model` is not provided with `--tokenizer huggingface`
+- **Invalid HuggingFace model**: Error reported if specified model doesn't exist or isn't compatible
+- **Network issues**: HuggingFace models are downloaded on first use; network errors are reported clearly
 
 ## Testing
 
-Test the script with your existing JSONL file:
+Test the script with your existing files using different tokenizers:
 
 ```bash
-# This will process the combined_dataset.jsonl file in the current directory
+# Test with tiktoken (default) - processes combined_dataset.jsonl in current directory
 uv run python token_counter.py
+
+# Test with HuggingFace GPT-2 tokenizer
+uv run python token_counter.py --tokenizer huggingface --hf-model gpt2
+
+# Test with HuggingFace BERT tokenizer
+uv run python token_counter.py --tokenizer huggingface --hf-model bert-base-uncased
+
+# Compare results between tokenizers
+uv run python token_counter.py --tokenizer tiktoken --output tiktoken_results.csv
+uv run python token_counter.py --tokenizer huggingface --hf-model gpt2 --output gpt2_results.csv
 ```
 
 ## Performance Notes
@@ -209,7 +231,10 @@ uv run python token_counter.py
 - Large files are processed in streaming fashion where possible
 - Excel files (.xlsx) are loaded entirely into memory
 - Progress is shown for directory processing
-- Token counting is performed using OpenAI's optimized tiktoken library
+- **Tiktoken**: Fast BPE tokenization optimized for OpenAI models
+- **HuggingFace**: Uses fast tokenizers (Rust-based) when available with `use_fast=True`
+- HuggingFace models are downloaded and cached locally on first use
+- Different tokenizers may produce significantly different token counts for the same text
 
 ## Troubleshooting
 
@@ -219,7 +244,17 @@ uv run python token_counter.py
 2. **File not found**: Check that paths in your paths file are correct
 3. **Permission denied**: Ensure read access to directories and files
 4. **Memory issues**: For very large Excel files, consider converting to CSV first
+5. **HuggingFace model not found**: Verify the model name exists on HuggingFace Hub
+6. **Network connection**: First-time HuggingFace model downloads require internet access
+7. **Token sequence warnings**: HuggingFace models may warn about long sequences; this doesn't affect counting
+8. **Missing --hf-model**: Remember to specify `--hf-model` when using `--tokenizer huggingface`
 
 ### Debug Mode
 
-For troubleshooting, you can modify the script to add verbose logging by uncommenting debug lines or adding print statements. 
+For troubleshooting, you can modify the script to add verbose logging by uncommenting debug lines or adding print statements.
+
+### HuggingFace Specific Notes
+
+- Models are cached in `~/.cache/huggingface/` after first download
+- The warning "None of PyTorch, TensorFlow >= 2.0, or Flax have been found" is normal for tokenization-only usage
+- Some models may have sequence length limits that trigger warnings but don't affect token counting 

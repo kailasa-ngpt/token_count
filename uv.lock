@@ -397,6 +397,7 @@ dependencies = [
     { name = "openpyxl" },
     { name = "pandas" },
     { name = "tiktoken" },
+    { name = "tqdm" },
     { name = "transformers" },
 ]
 
@@ -406,6 +407,7 @@ requires-dist = [
     { name = "openpyxl", specifier = ">=3.1.0" },
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
+    { name = "tqdm", specifier = ">=4.60.0" },
     { name = "transformers", specifier = ">=4.20.0" },
 ]
 
